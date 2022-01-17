@@ -14,7 +14,9 @@
 					<field name="file_name" invisible="1"/>
                 </group>	
 					<footer>
-						<button string="匯入" name="imoport_file"
+						<button string="匯入發票" name="imoport_file"
+							type="object" class="oe_highlight" />
+						<button string="匯入發票明細(訂單明細)" name="imoport_file_sale"
 							type="object" class="oe_highlight" />
 						<button string="取消" class="oe_link" special="cancel" />
 					</footer>

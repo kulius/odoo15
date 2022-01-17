@@ -48,7 +48,70 @@ class ImportAccountsale(models.TransientModel):
 	file_slect = fields.Binary(string="選擇檔案")
 	file_name = fields.Char(string="檔案名稱")
 
-	#匯入
+	#匯入發票明細(訂單明細)
+	def imoport_file_sale(self):
+		try:
+			fp = tempfile.NamedTemporaryFile(delete= False,suffix=".xlsx")
+			fp.write(binascii.a2b_base64(self.file_slect))
+			fp.seek(0)
+			values = {}
+			workbook = xlrd.open_workbook(fp.name)
+			worksheet = workbook.sheet_by_index(0)
+
+			first_row = []  # The row where we stock the name of the column
+			for col in range(worksheet.ncols):
+				first_row.append(worksheet.cell_value(0, col))
+			# transform the workbook to a list of dictionaries
+			archive_lines = []
+			for row in range(1, worksheet.nrows):
+				elm = {}
+				for col in range(worksheet.ncols):
+					elm[first_row[col]] = worksheet.cell_value(row, col)
+
+				archive_lines.append(elm)
+
+		except:
+			raise Warning(_("Invalid file!"))
+
+		cont = 0
+		for line in archive_lines:
+			cont += 1
+			acc_sale_no = str(line.get(u'產品編號', "")).strip()
+			if len(acc_sale_no) >= 10:
+				partner_name = str(line.get(u'小計', "")).strip()
+				partner_id = self.find_partner(partner_name)  # 尋找客戶編號
+				acc_id = None #若 銷售單 大於10碼 表示為 銷售單，清空後繼續尋找
+				acc_id = self.find_acc(acc_sale_no, partner_id, line)
+				continue
+
+			if len(acc_sale_no) < 10 and acc_id:
+				product_id = None
+				product_tmp_id, product_id = self.find_product(line)
+
+				quantity = line.get(u'數量', 0)
+				price_unit = self.get_valid_price(line.get(u'單價', ""), cont)
+			# product_name = product_id.name +' '+ str(line.get(u'採購量', "")).strip()+'*'+str(line.get(u'單價', "")).strip()
+			# accno = str(line.get(u'代號', "")).strip().replace('.0','')
+			# acc_serach = self.env['account.account'].search([('code', '=', accno)])
+
+			if acc_id and product_id:
+				vals = [{
+					#'move_id': acc_id.id,
+					'parent_state': 'draft',
+					'product_id': product_id.id,
+					# 'product_uom_qty': float(quantity),
+					'quantity': float(quantity),
+					'price_unit': price_unit,
+					'tax_ids': None,
+					# 'debit': price_unit,
+					# 'credit': price_unit,
+					#'tax_id': [(6, 0, self.tax_id)],
+				}]
+				acc_id.write({'invoice_line_ids': [(0, 0, x) for x in vals]})
+
+		return {'type': 'ir.actions.act_window_close'}
+
+	#匯入發票
 	def imoport_file(self):
 		try:
 			fp = tempfile.NamedTemporaryFile(delete= False,suffix=".xlsx")
@@ -78,203 +141,93 @@ class ImportAccountsale(models.TransientModel):
 		cont = 0
 		for line in archive_lines:
 			cont += 1
-			partner_id = self.find_partner(line) # 尋找客戶編號
-			# acc_sale_no = str(line.get(u'進貨單號', "")).strip()
-			# acc_id = self.find_acc(acc_sale_no, partner_id, line)
-			# product_tmp_id , product_id = self.find_product(line)
-			#
-			# # quantity = line.get(u'採購量', 0)
-			# quantity = 1
-			# price_unit = self.get_valid_price(line.get(u'發票金額', ""), cont)
-			# product_name = product_id.name +' '+ str(line.get(u'採購量', "")).strip()+'*'+str(line.get(u'單價', "")).strip()
-			# accno = str(line.get(u'代號', "")).strip().replace('.0','')
-			# acc_serach = self.env['account.account'].search([('code', '=', accno)])
-			#
-			# new_invoice_line_ids = []
-			# if acc_id and product_id:
-			# 	vals = [{
-			# 		# 'move_id': acc_id.id,
-			# 		'parent_state': 'draft',
-			# 		'product_id': product_id.id,
-			# 		# 'product_uom_qty': float(quantity),
-			# 		'quantity': float(quantity),
-			# 		'price_unit': price_unit,
-			# 		'name': product_name,
-			# 		'tax_ids': None,
-			# 		'account_id': acc_serach.id,
-			# 		# 'debit': price_unit,
-			# 		# 'credit': price_unit,
-			# 		#'tax_id': [(6, 0, self.tax_id)],
-			# 	}]
-			#
-			# 	if int(str(line.get(u'折讓金額', "")).strip()) > 0:
-			# 		vals += [{
-			# 			# 'move_id': acc_id.id,
-			# 			'parent_state': 'draft',
-			# 			'product_id': product_id.id,
-			# 			# 'product_uom_qty': float(quantity),
-			# 			'quantity': float(quantity),
-			# 			'price_unit': -1 * self.get_valid_price(line.get(u'折讓金額', ""), cont),
-			# 			'name': '折讓-'+product_name,
-			# 			'tax_ids': None,
-			# 			'account_id': acc_serach.id,
-			# 			# 'debit': 0,
-			# 			# 'credit': self.get_valid_price(line.get(u'折讓金額', ""), cont),
-			# 			# 'tax_id': [(6, 0, self.tax_id)],
-			# 		}]
-			#
-			#
-			# 	# new_invoice_line_ids.append((0, 0, vals))
-			# 	acc_id.write({'invoice_line_ids': [(0, 0, x) for x in vals]})
-			# 	date_ym = str(acc_id.date.year) + '/' + str(acc_id.date.month)
-			# 	for accline in acc_id.line_ids.filtered(lambda line: line.account_id.user_type_id.type in ('receivable', 'payable')):
-			# 		accline.name = acc_id.partner_id.name + ' ' + date_ym + ' ' + acc_id.invoice_payment_ref
-			# 	acc_id.write({
-			# 		'name': '/',
-			# 		'invoice_payment_ref':str(line.get(u'發票號碼', "")).strip().replace('.0',''),
-			# 	})
-				# account_move_line_obj.create(vals)
+			partner_name = str(line.get(u'客戶姓名', "")).strip()
+			partner_id = self.find_partner(partner_name) # 尋找客戶編號
+			acc_sale_no = str(line.get(u'銷售單', "")).strip()
+			acc_id = self.find_acc(acc_sale_no, partner_id, line)
 		return {'type': 'ir.actions.act_window_close'}
-	# 
-	# #尋找客戶，若無則建立
-	# def find_product(self, importline):
-	# 	p_code = str(importline.get(u'物品代碼', "")).strip()
-	# 	p_name = str(importline.get(u'物品名稱', "")).strip()
-	# 	p_accno = str(importline.get(u'代號', "")).strip().replace('.0','')
-	# 	p_description = str(importline.get(u'物品建保代碼', "")).strip()
-	# 	p_standard_price = str(importline.get(u'單價', "")).strip()
-	# 
-	# 	product_tmp_search = self.env['product.template'].search([('default_code', '=', p_code)])
-	# 	acc_serach = self.env['account.account'].search([('code', '=', p_accno)])
-	# 
-	# 	if product_tmp_search:
-	# 		if acc_serach.id != product_tmp_search.property_account_expense_id.id:
-	# 			product_tmp_search.update({
-	# 				'property_account_expense_id': acc_serach.id,
-	# 				'property_account_income_id': acc_serach.id,
-	# 			})
-	# 		product_search = self.env['product.product'].search([('product_tmpl_id', '=', product_tmp_search.id)])
-	# 		return product_tmp_search ,product_search
-	# 	else:
-	# 		product_tmp_search = self.env['product.template'].create({
-	# 			'name': p_name,
-	# 			'default_code': p_code,
-	# 			'description': p_description,
-	# 			'standard_price': p_standard_price if p_standard_price else 0.0,
-	# 			'type': 'service',
-	# 			'active': True,
-	# 			'sale_ok': 'True',
-	# 			'sale_ok': 'True',
-	# 			'taxes_id': None,
-	# 			'supplier_taxes_id': None,
-	# 			'property_account_expense_id': acc_serach.id if acc_serach else None,
-	# 			'property_account_income_id': acc_serach.id if acc_serach else None,
-	# 		})
-	# 		product_search = self.env['product.product'].search([('product_tmpl_id', '=', product_tmp_search.id)])
-	# 
-	# 		return product_tmp_search, product_search
+
+	#尋找客戶，若無則建立
+	def find_product(self, importline):
+		p_code = str(importline.get(u'產品編號', "")).strip()
+		p_name = str(importline.get(u'描述', "")).strip()
+		p_standard_price = str(importline.get(u'單價', "")).strip()
+
+		product_tmp_search = self.env['product.template'].search([('default_code', '=', p_code)])
+
+		if product_tmp_search:
+			product_search = self.env['product.product'].search([('product_tmpl_id', '=', product_tmp_search.id)])
+			return product_tmp_search ,product_search
+		else:
+			product_tmp_search = self.env['product.template'].create({
+				'name': p_name,
+				'default_code': p_code,
+				'standard_price': p_standard_price if p_standard_price else 0.0,
+				'type': 'service',
+				'active': True,
+				'sale_ok': 'True',
+				'taxes_id': None,
+				'supplier_taxes_id': None,
+			})
+			product_search = self.env['product.product'].search([('product_tmpl_id', '=', product_tmp_search.id)])
+
+			return product_tmp_search, product_search
 	# 
 	# 
 	#尋找客戶，若無則建立
-	def find_partner(self, importline):
-		user_no = str(importline.get(u'統一編號', "")).strip()
-		user_name = str(importline.get(u'廠商', "")).strip()
-
+	def find_partner(self, partner_name):
 		res_partner = self.env['res.partner']
-		partner_search = res_partner.search([('vat', '=', user_no)], limit=1)
+		partner_search = res_partner.search([('name', '=', partner_name)], limit=1)
 
 		if partner_search:
 			return partner_search
 		else:
 			partner_id = res_partner.create({
 				'company_type': 'company',
-				'vat': user_no,
-				'name': user_name,
+				'name': partner_name,
 				})
 			return partner_id
 	# 
-	# #尋找訂單，若無則建立
-	# def find_acc(self, acc_sale_no, partner_id, importline):
-	# 	acc_move_obj = self.env['account.move']
-	# 	acc_move_line_obj = self.env['account.move.line']
-	# 	acc_search = acc_move_obj.search([('sale_no', '=', acc_sale_no)])
-	# 
-	# 	if acc_search:
-	# 		return acc_search
-	# 	else:
-	# 		p_date = str(importline.get(u'進貨日期', "")).strip().split('/')
-	# 		acc_id = acc_move_obj.create({
-	# 			'state': 'draft',
-	# 			'partner_id': partner_id.id,
-	# 			'type': 'in_invoice',
-	# 			'name': '/',
-	# 			'date': datetime.strptime(str(int(p_date[0])+1911)+'-'+p_date[1]+'-'+p_date[2], "%Y-%m-%d"),
-	# 			'invoice_date': datetime.strptime(str(int(p_date[0]) + 1911) + '-' + p_date[1] + '-' + p_date[2], "%Y-%m-%d"),
-	# 			#'user_id': self.env.user.partner_id.id,
-	# 			'company_id': self.company_id.id,
-	# 			'journal_id': self.journal_id.id,
-	# 			'sale_no': acc_sale_no,
-	# 			'sale_date': str(importline.get(u'進貨日期', "")).strip(),
-	# 			'bill_no': str(importline.get(u'發票日期', "")).strip().replace('.0',''),
-	# 			'bill_date': str(importline.get(u'發票號碼', "")).strip(),
-	# 			'invoice_payment_ref': str(importline.get(u'發票號碼', "")).strip().replace('.0',''),
-	# 			'import_memo': self.file_name,
-	# 			'invoice_origin': self.file_name,
-	# 			})
-	# 
-	# 
-	# 		return acc_id
-	# 		# sale_cost1 = float(str(importline.get(u'金流服務費', "")).strip())
-	# 		# sale_cost2 = float(str(importline.get(u'成交手續費 (單)', "")).strip())
-	# 		# sale_cost3 = float(str(importline.get(u'蝦皮信用卡活動折抵 (單)', "")).strip())
-	# 		# if sale_cost1+sale_cost2+sale_cost3 != 0:
-	# 		# 	vals = {
-	# 		# 		'order_id': sale_id.id,
-	# 		# 		'product_id': self.cost_id.id,
-	# 		# 		'product_uom_qty': 1,
-	# 		# 		'price_unit': -1 * (sale_cost1+sale_cost2+sale_cost3),
-	# 		# 		'product_uom': self.cost_id.product_tmpl_id.uom_po_id.id,
-	# 		# 		'name': self.cost_id.name
-	# 		# 	}
-	# 		# 	sale_order_line_obj.create(vals)
-	# 		#
-	# 		# sale_cost = float(str(importline.get(u'賣家折扣券折抵金額 (單)', "")).strip())
-	# 
-	# 
-	# #尋找蝦皮客戶訂單，若無則建立
-	# def find_shopee_user(self, saleno):
-	# 	sale_order = self.env['sale.order']
-	# 	sale_search = sale_order.search([('client_order_ref', '=', saleno)])
-	# 
-	# 	if sale_search:
-	# 		return sale_search
-	# 	else:
-	# 		sale_id = sale_order.create({
-	# 			'partner_id': self.env.user.partner_id.id,
-	# 			'client_order_ref': saleno,
-	# 			})
-	# 		return sale_id
-	# 
-	# 
-	# 
+	#尋找訂單，若無則建立
+	def find_acc(self, acc_sale_no, partner_id, importline):
+		acc_move_obj = self.env['account.move']
+		acc_search = acc_move_obj.search([('ref', '=', acc_sale_no)])
+
+		if acc_search:
+			return acc_search
+		else:
+			p_date = str(importline.get(u'結帳日期', "")).strip().split('/')
+			acc_id = acc_move_obj.create({
+				'state': 'draft',
+				'partner_id': partner_id.id,
+				'move_type': 'out_invoice',
+				# 'name': '/',
+				'date': datetime.strptime(p_date[0]+'-'+p_date[1]+'-'+p_date[2], "%Y-%m-%d"),
+				'invoice_date': datetime.strptime(p_date[0] + '-' + p_date[1] + '-' + p_date[2], "%Y-%m-%d"),
+				#'user_id': self.env.user.partner_id.id,
+				'company_id': self.company_id.id,
+				'journal_id': self.journal_id.id,
+				'payment_reference': str(importline.get(u'發票號碼', "")),
+				'ref': acc_sale_no,
+				# 'sale_date': str(importline.get(u'進貨日期', "")).strip(),
+				# 'bill_no': str(importline.get(u'發票日期', "")).strip().replace('.0',''),
+				# 'bill_date': str(importline.get(u'發票號碼', "")).strip(),
+				# 'invoice_payment_ref': str(importline.get(u'發票號碼', "")).strip().replace('.0',''),
+				# 'import_memo': self.file_name,
+				# 'invoice_origin': self.file_name,
+				})
+			return acc_id
+
 	def valid_columns_keys(self, archive_lines):
 		columns = archive_lines[0].keys()
 		print
 		"columns>>", columns
 		text = "匯入必需包含下列欄位:";
 		text2 = text
-		if not '進貨日期' in columns:
-			text += "\n[ 進貨日期 ]"
-		if not u'統一編號' in columns:
-			text += "\n[ 統一編號 ]"
 		if not '發票號碼' in columns:
 			text += "\n[ 發票號碼 ]"
-		if not '採購量' in columns:
-			text += "\n[ 採購量 ]"
-		if not '單價' in columns:
-			text += "\n[ 單價 ]"
-		if not '發票金額' in columns:
-			text += "\n[ 發票金額 ]"
+		if not u'銷售單' in columns:
+			text += "\n[ 銷售單 ]"
 		if text != text2:
 			raise UserError(text)
 		return True
@@ -291,16 +244,16 @@ class ImportAccountsale(models.TransientModel):
 	# 		if not product_id:
 	# 			raise UserError("The product code of line %s can't be found in the system." % cont)
 	# 
-	# def get_valid_price(self, price, cont):
-	# 	if price != "":
-	# 		price = str(price).replace("$", "").replace(",", ".")
-	# 	try:
-	# 		price_float = float(price)
-	# 		return price_float
-	# 	except:
-	# 		raise UserError(
-	# 			"The price of the line item %s does not have an appropriate format, for example: '100.00' - '100" % cont)
-	# 	return False
+	def get_valid_price(self, price, cont):
+		if price != "":
+			price = str(price).replace("$", "").replace(",", ".")
+		try:
+			price_float = float(price)
+			return price_float
+		except:
+			raise UserError(
+				"The price of the line item %s does not have an appropriate format, for example: '100.00' - '100" % cont)
+		return False
 
 
 # 	def create_chart_accounts(self,values):
